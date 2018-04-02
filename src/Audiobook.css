@@ -1,0 +1,10 @@
+.audiobook {
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  border: 1px solid red;
+}
+
+.prop {
+  margin: 10px;
+}
