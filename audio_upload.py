@@ -2,32 +2,60 @@
 import boto3
 import os
 import sys
+from simplempeginfo import Mpeg4
+
+AU_S3_BUCKET = os.getenv('AU_S3_BUCKET', 'mybucket')
+AU_DB_TABLE = os.getenv('AU_DB_TABLE', 'mytable')
 
 
-def upload_file(s3, filename):
-    body = None
-    with open(filename, 'rb') as f:
-        body = f.read()
-    if body is not None:
-        resp = s3.put_object(Bucket='aswmudnet', Key='files/' + filename, Body=body)
-        if resp['ResponseMetadata']['HTTPStatusCode'] == 200:
+class ProgressMonitor:
+    def __init__(self, size):
+        self.size = size
+        self.transfered_so_far = 0
+        self.completed = False
+        try:
+            import progressbar
+            self.progress_bar = progressbar.ProgressBar(max_value=size, widgets=[
+                ' [', progressbar.Timer(), '] ',
+                progressbar.Bar(),
+                ' (', progressbar.ETA(), ') ',
+            ])
+        except Exception:
+            self.progress_bar = None
+
+    def __call__(self, bytes_transfered):
+        self.transfered_so_far += bytes_transfered
+        if self.transfered_so_far >= self.size:
+            self.completed = True
+        if self.progress_bar is not None:
+            if self.completed:
+                self.progress_bar.update(self.size)
+            else:
+                self.progress_bar.update(self.transfered_so_far)
+
+
+def upload_file(s3, filename, progress_monitor):
+    with open(filename, 'rb') as file:
+        s3.upload_fileobj(file, AU_S3_BUCKET, os.path.basename(filename), Callback=progress_monitor)
+        if progress_monitor.completed:
             return True
     return False
 
 
-def register_file(db, filename, name, size, length):
-    put_item = {'name': {'S': name}, 'filename': {'S': filename}, 'size': {'N': str(size)}, 'length': {'N': str(length)}}
-    resp = db.put_item(TableName='audiobooks', Item=put_item)
+def register_file(db, filename, size, mpeg):
+    put_item = {'name': {'S': mpeg.title}, 'filename': {'S': filename}, 'author': {'S': mpeg.author}, 'comment': {'S': mpeg.comment},
+                'size': {'N': str(size)}, 'length': {'N': str(mpeg.length_in_milliseconds)}, 'chapters_len': {'N': str(len(mpeg.chapters))}}
+    resp = db.put_item(TableName=AU_DB_TABLE, Item=put_item)
     return resp['ResponseMetadata']['HTTPStatusCode'] == 200
 
 
-def upload(filename, name, size, length):
+def upload(filename, size, mpeg):
     resp = []
     s3 = boto3.client('s3')
-    uploaded = upload_file(s3, filename)
+    uploaded = upload_file(s3, filename, ProgressMonitor(size))
     if uploaded:
         db = boto3.client('dynamodb')
-        registered = register_file(db, filename, name, size, length)
+        registered = register_file(db, os.path.basename(filename), size, mpeg)
         resp.append((uploaded, registered))
     return resp
 
@@ -37,7 +65,6 @@ def usage():
 
 
 if __name__ == '__main__':
-    from Mpeg4 import Mpeg4
     if len(sys.argv) < 2:
         usage()
         sys.exit(1)
@@ -46,10 +73,8 @@ if __name__ == '__main__':
             filename = sys.argv[1]
             size = os.stat(filename).st_size
             mp4 = Mpeg4(filename)
-            milliseconds = mp4.duration
-            name = mp4.title
         except Exception:
             usage()
             sys.exit(1)
-        resp = upload(filename, name, size, milliseconds)
+        resp = upload(filename, size, mp4)
         print(resp)
