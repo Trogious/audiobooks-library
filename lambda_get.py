@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import boto3
+import os
+
+ALG_DB_TABLE = os.getenv('ALG_DB_TABLE', 'mytable')
 
 
 def item_to_json(item):
@@ -15,7 +18,7 @@ def item_to_json(item):
 def lambda_handler(event, context):
     audiobooks = []
     dynamo = boto3.client('dynamodb')
-    resp = dynamo.scan(TableName='audiobooks')
+    resp = dynamo.scan(TableName=ALG_DB_TABLE)
     if resp is not None and 'Items' in resp.keys():
         for item in resp['Items']:
             audiobooks.append(item_to_json(item))
